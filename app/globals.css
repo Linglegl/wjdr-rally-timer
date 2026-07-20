@@ -362,6 +362,18 @@ input:disabled {
   color: var(--signal-bright);
 }
 
+.merged-countdown-item.tone-finished {
+  border-color: rgba(107, 214, 162, 0.38);
+  border-left-color: var(--success);
+  background: rgba(107, 214, 162, 0.08);
+}
+
+.merged-countdown-item.tone-finished > strong {
+  color: var(--success);
+  font-size: clamp(25px, 3.8vw, 42px);
+  letter-spacing: 0.03em;
+}
+
 .active-hint {
   color: var(--muted);
   font-size: 13px;
@@ -736,6 +748,15 @@ input:disabled {
   background: var(--signal);
 }
 
+.rally-row.status-finished {
+  border-color: rgba(107, 214, 162, 0.3);
+  background: rgba(107, 214, 162, 0.04);
+}
+
+.rally-row.status-finished::before {
+  background: var(--success);
+}
+
 .rally-name-cell {
   display: flex;
   align-items: center;
@@ -844,6 +865,14 @@ input:disabled {
 
 .tone-launch span {
   color: #e9a18a;
+}
+
+.tone-finished strong {
+  color: var(--success);
+}
+
+.tone-finished span {
+  color: #86bba0;
 }
 
 .remove-button {

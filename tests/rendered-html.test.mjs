@@ -58,7 +58,17 @@ test("keeps voice alerts concise and completes launched rallies", async () => {
   assert.match(source, /speak\("发出"\)/);
   assert.match(source, /setFinishedRallyIds\(nextFinishedIds\)/);
   assert.match(source, /const MERGE_WINDOW_MS = 5000/);
-  assert.match(source, /plan\.launchAt - previousPlan\.launchAt >= MERGE_WINDOW_MS/);
+  assert.match(
+    source,
+    /currentPlan\.launchAt - previousPlan\.launchAt >= MERGE_WINDOW_MS/,
+  );
+  assert.match(
+    source,
+    /nextPlan\.launchAt - currentPlan\.launchAt >= MERGE_WINDOW_MS/,
+  );
+  assert.match(source, /return plans\.slice\(startIndex, endIndex \+ 1\)/);
+  assert.match(source, /isFinished \? "已出发"/);
+  assert.match(source, /发出于 \$\{formatClock\(plan\.launchAt\)\}/);
   assert.match(source, /相隔不足 5 秒，按各自倒计时依次发出/);
   assert.match(source, /该时间已无法到达，请检查时间是否设置正确/);
   assert.doesNotMatch(source, /voiceEnabled|AudioContext|count:\$\{countdown\}/);

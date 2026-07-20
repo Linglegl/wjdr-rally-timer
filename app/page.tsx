@@ -125,24 +125,50 @@ export default function Home() {
     () => plans.filter((plan) => !finishedRallyIds.includes(plan.id)),
     [finishedRallyIds, plans],
   );
+  const activePlan =
+    pendingPlans.find((plan) => plan.launchAt > now) ?? pendingPlans[0];
   const activeGroup = useMemo(() => {
-    const firstPlan =
-      pendingPlans.find((plan) => plan.launchAt > now) ?? pendingPlans[0];
-    if (!firstPlan) return [];
+    if (!activePlan) return [];
 
-    const firstIndex = pendingPlans.findIndex((plan) => plan.id === firstPlan.id);
-    const group = [firstPlan];
-    let previousPlan = firstPlan;
+    const anchorIndex = plans.findIndex((plan) => plan.id === activePlan.id);
+    let startIndex = anchorIndex;
+    let endIndex = anchorIndex;
 
-    for (const plan of pendingPlans.slice(firstIndex + 1)) {
-      if (plan.launchAt - previousPlan.launchAt >= MERGE_WINDOW_MS) break;
-      group.push(plan);
-      previousPlan = plan;
+    while (startIndex > 0) {
+      const currentPlan = plans[startIndex];
+      const previousPlan = plans[startIndex - 1];
+      if (currentPlan.launchAt - previousPlan.launchAt >= MERGE_WINDOW_MS) break;
+      startIndex -= 1;
     }
 
-    return group;
-  }, [now, pendingPlans]);
-  const activePlan = activeGroup[0];
+    while (endIndex < plans.length - 1) {
+      const currentPlan = plans[endIndex];
+      const nextPlan = plans[endIndex + 1];
+      if (nextPlan.launchAt - currentPlan.launchAt >= MERGE_WINDOW_MS) break;
+      endIndex += 1;
+    }
+
+    return plans.slice(startIndex, endIndex + 1);
+  }, [activePlan, plans]);
+  const visiblePlans = useMemo(() => {
+    if (sessionComplete) return pendingPlans;
+    if (!running) return plans;
+
+    const visibleIds = new Set([
+      ...pendingPlans.map((plan) => plan.id),
+      ...activeGroup
+        .filter((plan) => finishedRallyIds.includes(plan.id))
+        .map((plan) => plan.id),
+    ]);
+    return plans.filter((plan) => visibleIds.has(plan.id));
+  }, [
+    activeGroup,
+    finishedRallyIds,
+    pendingPlans,
+    plans,
+    running,
+    sessionComplete,
+  ]);
   const activeStatus = activePlan
     ? getStatus(activePlan, now, announceSeconds)
     : null;
@@ -420,9 +446,12 @@ export default function Home() {
                 <div className="merged-countdowns">
                   {activeGroup.map((plan, index) => {
                     const status = getStatus(plan, now, announceSeconds);
+                    const isFinished = finishedRallyIds.includes(plan.id);
                     return (
                       <div
-                        className={`merged-countdown-item tone-${status.tone}`}
+                        className={`merged-countdown-item tone-${
+                          isFinished ? "finished" : status.tone
+                        }`}
                         key={plan.id}
                       >
                         <span className="merged-countdown-meta">
@@ -434,7 +463,9 @@ export default function Home() {
                           </span>
                         </span>
                         <strong>
-                          {status.tone === "launch"
+                          {isFinished
+                            ? "已出发"
+                            : status.tone === "launch"
                             ? "发出"
                             : status.tone === "counting"
                               ? status.label
@@ -604,12 +635,15 @@ export default function Home() {
         </div>
 
         <div className="rally-list">
-          {(running || sessionComplete ? pendingPlans : plans).map((plan, index) => {
+          {visiblePlans.map((plan, index) => {
             const status = getStatus(plan, now, announceSeconds);
+            const isFinished = finishedRallyIds.includes(plan.id);
             return (
               <article
                 className={`rally-row ${
-                  running ? `status-${status.tone}` : ""
+                  running
+                    ? `status-${isFinished ? "finished" : status.tone}`
+                    : ""
                 }`}
                 key={plan.id}
               >
@@ -675,10 +709,18 @@ export default function Home() {
                   <span>反推发车</span>
                 </div>
 
-                <div className={`status-cell tone-${status.tone}`}>
-                  <strong>{running ? status.label : "就绪"}</strong>
+                <div
+                  className={`status-cell tone-${
+                    isFinished ? "finished" : status.tone
+                  }`}
+                >
+                  <strong>
+                    {isFinished ? "已出发" : running ? status.label : "就绪"}
+                  </strong>
                   <span>
-                    {running
+                    {isFinished
+                      ? `发出于 ${formatClock(plan.launchAt)}`
+                      : running
                       ? status.detail
                       : `行军 ${formatDuration(plan.durationSeconds)}`}
                   </span>
