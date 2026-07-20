@@ -4,8 +4,13 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "同抵集结计时器 | WJDR",
   description:
-    "为无尽冬日多队集结反推发车时刻，逐秒语音报数，确保所有集结同时到达。",
+    "为无尽冬日多队集结反推发车时刻，提供出发前与发出时语音提醒，确保所有集结同时到达。",
   applicationName: "WJDR 同抵集结计时器",
+  icons: {
+    icon: "/logo.jpg",
+    shortcut: "/logo.jpg",
+    apple: "/logo.jpg",
+  },
 };
 
 export const viewport: Viewport = {

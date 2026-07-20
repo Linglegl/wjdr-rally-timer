@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Rally = {
   id: string;
@@ -81,23 +81,20 @@ function getStatus(plan: RallyPlan, now: number, announceSeconds: number) {
       detail: "准备发出",
     };
   }
-  if (delta > -2500) {
-    return { label: "发出", tone: "launch", detail: "现在发出集结" };
-  }
-  return { label: "已发出", tone: "done", detail: formatClock(plan.launchAt) };
+  return { label: "发出", tone: "launch", detail: "现在发出集结" };
 }
 
 export default function Home() {
   const [arrivalValue, setArrivalValue] = useState("");
   const [announceSeconds, setAnnounceSeconds] = useState(5);
   const [rallies, setRallies] = useState<Rally[]>(DEFAULT_RALLIES);
-  const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [running, setRunning] = useState(false);
+  const [sessionComplete, setSessionComplete] = useState(false);
+  const [finishedRallyIds, setFinishedRallyIds] = useState<string[]>([]);
   const [now, setNow] = useState(0);
   const [error, setError] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const spokenRef = useRef(new Set<string>());
-  const audioRef = useRef<AudioContext | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   const arrivalAt = new Date(arrivalValue).getTime();
@@ -119,67 +116,27 @@ export default function Home() {
     [arrivalAt, now, rallies],
   );
 
-  const activePlan = useMemo(() => {
-    const justLaunched = plans.find((plan) => {
-      const delta = plan.launchAt - now;
-      return delta <= 0 && delta > -900;
-    });
-    return (
-      justLaunched ??
-      plans.find((plan) => plan.launchAt > now) ??
-      plans[plans.length - 1]
-    );
-  }, [now, plans]);
+  const pendingPlans = useMemo(
+    () => plans.filter((plan) => !finishedRallyIds.includes(plan.id)),
+    [finishedRallyIds, plans],
+  );
+  const activePlan =
+    pendingPlans.find((plan) => plan.launchAt > now) ?? pendingPlans[0];
   const activeStatus = activePlan
     ? getStatus(activePlan, now, announceSeconds)
     : null;
-  const completedCount = plans.filter((plan) => plan.launchAt <= now).length;
-  const allDone =
-    running &&
-    plans.length > 0 &&
-    plans.every((plan) => now - plan.launchAt > 2500);
+  const completedCount = finishedRallyIds.length;
 
-  const speak = useCallback(
-    (text: string, urgent = false) => {
-      if (!voiceEnabled || typeof window === "undefined") return;
-
-      if ("speechSynthesis" in window) {
-        if (urgent) window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = "zh-CN";
-        utterance.rate = urgent ? 1.12 : 1;
-        utterance.pitch = 1;
-        utterance.volume = 1;
-        window.speechSynthesis.speak(utterance);
-      }
-
-      try {
-        const AudioContextClass =
-          window.AudioContext ||
-          (
-            window as typeof window & {
-              webkitAudioContext?: typeof AudioContext;
-            }
-          ).webkitAudioContext;
-        if (!AudioContextClass) return;
-        const context = audioRef.current ?? new AudioContextClass();
-        audioRef.current = context;
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        oscillator.frequency.value = urgent ? 880 : 610;
-        gain.gain.setValueAtTime(0.0001, context.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.12);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start();
-        oscillator.stop(context.currentTime + 0.13);
-      } catch {
-        // Speech remains available even if Web Audio is restricted.
-      }
-    },
-    [voiceEnabled],
-  );
+  function speak(text: string) {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "zh-CN";
+    utterance.rate = 1.08;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    window.speechSynthesis.speak(utterance);
+  }
 
   useEffect(() => {
     const mountedAt = Date.now();
@@ -190,7 +147,6 @@ export default function Home() {
         const data = JSON.parse(saved) as {
           arrivalValue?: string;
           announceSeconds?: number;
-          voiceEnabled?: boolean;
           rallies?: Rally[];
         };
         setArrivalValue(
@@ -198,9 +154,6 @@ export default function Home() {
         );
         if (typeof data.announceSeconds === "number") {
           setAnnounceSeconds(data.announceSeconds);
-        }
-        if (typeof data.voiceEnabled === "boolean") {
-          setVoiceEnabled(data.voiceEnabled);
         }
         if (Array.isArray(data.rallies) && data.rallies.length) {
           setRallies(data.rallies);
@@ -220,9 +173,9 @@ export default function Home() {
     if (!hydrated) return;
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ arrivalValue, announceSeconds, voiceEnabled, rallies }),
+      JSON.stringify({ arrivalValue, announceSeconds, rallies }),
     );
-  }, [announceSeconds, arrivalValue, hydrated, rallies, voiceEnabled]);
+  }, [announceSeconds, arrivalValue, hydrated, rallies]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), running ? 80 : 500);
@@ -232,9 +185,9 @@ export default function Home() {
   useEffect(() => {
     if (!running) return;
 
-    const newLaunches = plans.filter((plan) => {
+    const newLaunches = pendingPlans.filter((plan) => {
       const delta = plan.launchAt - now;
-      if (delta <= 0 && delta > -900) {
+      if (delta <= 0) {
         const key = `${plan.id}:launch`;
         if (!spokenRef.current.has(key)) {
           spokenRef.current.add(key);
@@ -245,35 +198,38 @@ export default function Home() {
     });
 
     if (newLaunches.length) {
-      speak(
-        `${newLaunches.map((plan) => plan.name).join("、")}，发出集结`,
-        true,
+      speak(`${newLaunches.map((plan) => plan.name).join("、")}，发出`);
+      const completedIds = newLaunches.map((plan) => plan.id);
+      const nextFinishedIds = Array.from(
+        new Set([...finishedRallyIds, ...completedIds]),
       );
+      setFinishedRallyIds(nextFinishedIds);
+
+      if (nextFinishedIds.length >= plans.length) {
+        setRunning(false);
+        setSessionComplete(true);
+        wakeLockRef.current?.release().catch(() => undefined);
+        wakeLockRef.current = null;
+      }
       return;
     }
 
-    const nextPlan = plans.find((plan) => plan.launchAt > now);
+    const nextPlan = pendingPlans.find((plan) => plan.launchAt > now);
     if (nextPlan) {
       const delta = nextPlan.launchAt - now;
-      const countdown = Math.ceil(delta / 1000);
       if (delta <= announceSeconds * 1000) {
-        const key = `${nextPlan.id}:count:${countdown}`;
+        const key = `${nextPlan.id}:prepare`;
         if (!spokenRef.current.has(key)) {
           spokenRef.current.add(key);
-          speak(
-            countdown === announceSeconds
-              ? `${nextPlan.name}，准备，${countdown}`
-              : String(countdown),
-          );
+          speak(`${nextPlan.name}，准备`);
         }
       }
     }
-  }, [announceSeconds, now, plans, running, speak]);
+  }, [announceSeconds, finishedRallyIds, now, pendingPlans, plans.length, running]);
 
   useEffect(() => {
     return () => {
       wakeLockRef.current?.release().catch(() => undefined);
-      audioRef.current?.close().catch(() => undefined);
       window.speechSynthesis?.cancel();
     };
   }, []);
@@ -284,6 +240,8 @@ export default function Home() {
         rally.id === id ? { ...rally, ...changes } : rally,
       ),
     );
+    setSessionComplete(false);
+    setFinishedRallyIds([]);
     if (running) stopTimer();
   }
 
@@ -298,11 +256,15 @@ export default function Home() {
         seconds: 30,
       },
     ]);
+    setSessionComplete(false);
+    setFinishedRallyIds([]);
   }
 
   function removeRally(id: string) {
     if (rallies.length <= 1) return;
     setRallies((current) => current.filter((rally) => rally.id !== id));
+    setSessionComplete(false);
+    setFinishedRallyIds([]);
     if (running) stopTimer();
   }
 
@@ -322,12 +284,14 @@ export default function Home() {
       return;
     }
     if (plans.some((plan) => plan.launchAt <= timestamp)) {
-      setError("有集结的发车时间已经过去，请延后统一到达时间");
+      setError("该时间已无法到达，请检查时间是否设置正确");
       return;
     }
 
     setError("");
     spokenRef.current.clear();
+    setFinishedRallyIds([]);
+    setSessionComplete(false);
     setRunning(true);
 
     try {
@@ -338,13 +302,12 @@ export default function Home() {
       // The timer still works if the device does not support wake lock.
     }
 
-    if (voiceEnabled) {
-      speak("同步计时已开始");
-    }
   }
 
   function stopTimer() {
     setRunning(false);
+    setSessionComplete(false);
+    setFinishedRallyIds([]);
     spokenRef.current.clear();
     wakeLockRef.current?.release().catch(() => undefined);
     wakeLockRef.current = null;
@@ -355,16 +318,22 @@ export default function Home() {
     const target = new Date(Date.now() + minutesFromNow * 60 * 1000);
     target.setMilliseconds(0);
     setArrivalValue(toLocalDateTimeValue(target));
+    setSessionComplete(false);
+    setFinishedRallyIds([]);
     if (running) stopTimer();
+  }
+
+  function prepareNextRound() {
+    setSessionComplete(false);
+    setFinishedRallyIds([]);
+    setQuickArrival(5);
   }
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            W
-          </span>
+          <img className="brand-mark" src="/logo.jpg" alt="" />
           <div>
             <p>WJDR · 联盟作战工具</p>
             <h1>同抵集结计时器</h1>
@@ -392,19 +361,19 @@ export default function Home() {
             )}
           </div>
 
-          {!running ? (
+          {sessionComplete ? (
+            <div className="idle-state complete-state" aria-live="assertive">
+              <p>本轮完成</p>
+              <h2>全部集结已发出</h2>
+              <span>各队将于 {formatClock(arrivalAt)} 同时到达目标。</span>
+            </div>
+          ) : !running ? (
             <div className="idle-state">
               <p>下一步</p>
               <h2>设定同一到达时间</h2>
               <span>
                 系统会根据每队行军时长，自动反推出准确的发车时刻。
               </span>
-            </div>
-          ) : allDone ? (
-            <div className="idle-state complete-state" aria-live="assertive">
-              <p>本轮完成</p>
-              <h2>全部集结已发出</h2>
-              <span>各队将于 {formatClock(arrivalAt)} 同时到达目标。</span>
             </div>
           ) : (
             <div className="countdown-state" aria-live="polite">
@@ -433,8 +402,8 @@ export default function Home() {
               <span />
             </div>
             <div>
-              <span>倒数报数</span>
-              <strong>{announceSeconds} 秒</strong>
+              <span>语音提醒</span>
+              <strong>提前 {announceSeconds} 秒</strong>
             </div>
           </div>
         </article>
@@ -446,7 +415,7 @@ export default function Home() {
               <h2>作战参数</h2>
             </div>
             <span className={`mode-badge ${running ? "active" : ""}`}>
-              {running ? "已锁定" : "可编辑"}
+              {running ? "已锁定" : sessionComplete ? "已完成" : "可编辑"}
             </span>
           </div>
 
@@ -467,7 +436,7 @@ export default function Home() {
           />
 
           <div className="quick-times" aria-label="快捷设置到达时间">
-            {[5, 10, 15, 20].map((minutes) => (
+            {[1, 2, 3, 5].map((minutes) => (
               <button
                 key={minutes}
                 type="button"
@@ -481,7 +450,10 @@ export default function Home() {
 
           <div className="compact-settings">
             <label>
-              <span>提前报数</span>
+              <span>
+                <strong>出发前语音提示</strong>
+                <small>仅提醒一次，不进行语音读秒</small>
+              </span>
               <span className="number-control">
                 <input
                   type="number"
@@ -490,7 +462,7 @@ export default function Home() {
                   max="30"
                   value={announceSeconds}
                   disabled={running}
-                  aria-label="提前报数秒数"
+                  aria-label="出发前语音提醒秒数"
                   onChange={(event) =>
                     setAnnounceSeconds(
                       Math.min(30, Math.max(3, Number(event.target.value) || 3)),
@@ -499,19 +471,6 @@ export default function Home() {
                 />
                 <em>秒</em>
               </span>
-            </label>
-            <label className="switch-row">
-              <span>
-                <strong>语音提醒</strong>
-                <small>逐秒中文报数</small>
-              </span>
-              <input
-                type="checkbox"
-                checked={voiceEnabled}
-                onChange={(event) => setVoiceEnabled(event.target.checked)}
-                aria-label="开启语音提醒"
-              />
-              <span className="switch" aria-hidden="true" />
             </label>
           </div>
 
@@ -524,10 +483,22 @@ export default function Home() {
           <button
             className={`primary-action ${running ? "stop" : ""}`}
             type="button"
-            onClick={running ? stopTimer : startTimer}
+            onClick={
+              sessionComplete
+                ? prepareNextRound
+                : running
+                  ? stopTimer
+                  : startTimer
+            }
           >
-            <span aria-hidden="true">{running ? "■" : "▶"}</span>
-            {running ? "停止并重新校准" : "开始同步计时"}
+            <span aria-hidden="true">
+              {sessionComplete ? "↻" : running ? "■" : "▶"}
+            </span>
+            {sessionComplete
+              ? "准备下一轮"
+              : running
+                ? "停止并重新校准"
+                : "开始同步计时"}
           </button>
           <p className="action-note">
             点击开始即启用屏幕常亮；建议保持本页面在前台。
@@ -563,7 +534,7 @@ export default function Home() {
         </div>
 
         <div className="rally-list">
-          {plans.map((plan, index) => {
+          {(running || sessionComplete ? pendingPlans : plans).map((plan, index) => {
             const status = getStatus(plan, now, announceSeconds);
             return (
               <article
@@ -655,6 +626,11 @@ export default function Home() {
               </article>
             );
           })}
+          {sessionComplete && pendingPlans.length === 0 && (
+            <div className="empty-queue">
+              本轮集结均已结束，点击“准备下一轮”重新载入。
+            </div>
+          )}
         </div>
 
         <div className="sync-note">
@@ -673,7 +649,7 @@ export default function Home() {
 
       <footer>
         <span>WJDR BRANCH PROJECT</span>
-        <p>本地保存 · 无需登录 · 精确到秒</p>
+        <p>Powered by Linglegl</p>
       </footer>
     </main>
   );
