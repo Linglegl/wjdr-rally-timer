@@ -33,14 +33,14 @@ http://localhost:3000
 复制 `.env.example` 为 `.env.local`，填写允许访问服务的域名：
 
 ```dotenv
-ALLOWED_HOSTS=timer.example.com,www.timer.example.com
+ALLOWED_HOSTS=rally.burgerl.com
 ```
 
 多个域名使用英文逗号分隔，只填写主机名，不要包含协议或端口。将域名的 DNS
 解析到服务器 IP 后，重新运行 `npm.cmd run dev` 或 `npm.cmd run start`，即可通过：
 
 ```text
-http://timer.example.com:3000
+http://rally.burgerl.com:3000
 ```
 
 如需使用标准的 `80/443` 端口和 HTTPS，请使用 Nginx 或 Caddy 将域名反向代理到

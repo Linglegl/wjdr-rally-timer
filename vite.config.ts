@@ -43,6 +43,7 @@ export default defineConfig(async ({ mode }) => {
   const allowedHosts = Array.from(
     new Set([
       "localhost",
+      "rally.burgerl.com",
       ...(env.ALLOWED_HOSTS ?? "")
         .split(",")
         .map((host) => host.trim())

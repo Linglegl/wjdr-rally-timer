@@ -93,5 +93,6 @@ test("startup scripts bind all interfaces and support allowed domain hosts", asy
   assert.match(viteSource, /loadEnv/);
   assert.match(viteSource, /ALLOWED_HOSTS/);
   assert.match(viteSource, /allowedHosts/);
+  assert.match(viteSource, /"rally\.burgerl\.com"/);
   assert.match(envExample, /^ALLOWED_HOSTS=/m);
 });
