@@ -25,6 +25,27 @@ npm.cmd run dev
 http://localhost:3000
 ```
 
+开发和生产启动命令均监听 `0.0.0.0:3000`，局域网设备可以通过
+`http://服务器局域网IP:3000` 访问。
+
+## 使用域名访问
+
+复制 `.env.example` 为 `.env.local`，填写允许访问服务的域名：
+
+```dotenv
+ALLOWED_HOSTS=timer.example.com,www.timer.example.com
+```
+
+多个域名使用英文逗号分隔，只填写主机名，不要包含协议或端口。将域名的 DNS
+解析到服务器 IP 后，重新运行 `npm.cmd run dev` 或 `npm.cmd run start`，即可通过：
+
+```text
+http://timer.example.com:3000
+```
+
+如需使用标准的 `80/443` 端口和 HTTPS，请使用 Nginx 或 Caddy 将域名反向代理到
+`127.0.0.1:3000`，并在代理服务器上配置 TLS 证书。
+
 ### 后续运行
 
 依赖已经安装后，只需要：

@@ -73,3 +73,25 @@ test("keeps voice alerts concise and completes launched rallies", async () => {
   assert.match(source, /该时间已无法到达，请检查时间是否设置正确/);
   assert.doesNotMatch(source, /voiceEnabled|AudioContext|count:\$\{countdown\}/);
 });
+
+test("startup scripts bind all interfaces and support allowed domain hosts", async () => {
+  const [packageSource, viteSource, envExample] = await Promise.all([
+    readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../.env.example", import.meta.url), "utf8"),
+  ]);
+  const packageJson = JSON.parse(packageSource);
+
+  assert.equal(
+    packageJson.scripts.dev,
+    "vinext dev --hostname 0.0.0.0 --port 3000",
+  );
+  assert.equal(
+    packageJson.scripts.start,
+    "vinext start --hostname 0.0.0.0 --port 3000",
+  );
+  assert.match(viteSource, /loadEnv/);
+  assert.match(viteSource, /ALLOWED_HOSTS/);
+  assert.match(viteSource, /allowedHosts/);
+  assert.match(envExample, /^ALLOWED_HOSTS=/m);
+});
