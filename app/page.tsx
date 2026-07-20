@@ -17,6 +17,14 @@ type RallyPlan = Rally & {
 
 const STORAGE_KEY = "wjdr-rally-timer-v1";
 const MERGE_WINDOW_MS = 5000;
+const VOICE_LEAD_MS = 300;
+const QUICK_ARRIVAL_PRESETS = [
+  { label: "+1 分钟", seconds: 60 },
+  { label: "+90 秒", seconds: 90 },
+  { label: "+2 分钟", seconds: 120 },
+  { label: "+3 分钟", seconds: 180 },
+  { label: "+5 分钟", seconds: 300 },
+];
 const DEFAULT_RALLIES: Rally[] = [
   { id: "rally-1", name: "一队 · 主力集结", minutes: 2, seconds: 36 },
   { id: "rally-2", name: "二队 · 侧翼集结", minutes: 1, seconds: 48 },
@@ -97,6 +105,7 @@ export default function Home() {
   const [sessionComplete, setSessionComplete] = useState(false);
   const [finishedRallyIds, setFinishedRallyIds] = useState<string[]>([]);
   const [now, setNow] = useState(0);
+  const [liveClockTime, setLiveClockTime] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const spokenRef = useRef(new Set<string>());
@@ -188,6 +197,7 @@ export default function Home() {
   useEffect(() => {
     const mountedAt = Date.now();
     setNow(mountedAt);
+    setLiveClockTime(mountedAt);
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
       if (saved) {
@@ -225,16 +235,20 @@ export default function Home() {
   }, [announceSeconds, arrivalValue, hydrated, rallies]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), running ? 80 : 500);
+    const timer = window.setInterval(() => {
+      const timestamp = Date.now();
+      setNow(timestamp);
+      setLiveClockTime(timestamp);
+    }, running ? 80 : 500);
     return () => window.clearInterval(timer);
   }, [running]);
 
   useEffect(() => {
     if (!running) return;
 
-    const newLaunches = pendingPlans.filter((plan) => {
+    const voiceLaunches = pendingPlans.filter((plan) => {
       const delta = plan.launchAt - now;
-      if (delta <= 0) {
+      if (delta <= VOICE_LEAD_MS) {
         const key = `${plan.id}:launch`;
         if (!spokenRef.current.has(key)) {
           spokenRef.current.add(key);
@@ -244,9 +258,15 @@ export default function Home() {
       return false;
     });
 
-    if (newLaunches.length) {
+    if (voiceLaunches.length) {
       speak("发出");
-      const completedIds = newLaunches.map((plan) => plan.id);
+    }
+
+    const completedLaunches = pendingPlans.filter(
+      (plan) => plan.launchAt - now <= 0,
+    );
+    if (completedLaunches.length) {
+      const completedIds = completedLaunches.map((plan) => plan.id);
       const nextFinishedIds = Array.from(
         new Set([...finishedRallyIds, ...completedIds]),
       );
@@ -265,7 +285,10 @@ export default function Home() {
     const nextPlan = nextGroup[0];
     if (nextPlan) {
       const delta = nextPlan.launchAt - now;
-      if (delta <= announceSeconds * 1000) {
+      if (
+        delta > VOICE_LEAD_MS &&
+        delta <= announceSeconds * 1000 + VOICE_LEAD_MS
+      ) {
         const unannouncedPlans = nextGroup.filter(
           (plan) => !spokenRef.current.has(`${plan.id}:prepare`),
         );
@@ -374,8 +397,8 @@ export default function Home() {
     window.speechSynthesis?.cancel();
   }
 
-  function setQuickArrival(minutesFromNow: number) {
-    const target = new Date(Date.now() + minutesFromNow * 60 * 1000);
+  function setQuickArrival(secondsFromNow: number) {
+    const target = new Date(Date.now() + secondsFromNow * 1000);
     target.setMilliseconds(0);
     setArrivalValue(toLocalDateTimeValue(target));
     setSessionComplete(false);
@@ -386,7 +409,7 @@ export default function Home() {
   function prepareNextRound() {
     setSessionComplete(false);
     setFinishedRallyIds([]);
-    setQuickArrival(5);
+    setQuickArrival(300);
   }
 
   return (
@@ -399,10 +422,19 @@ export default function Home() {
             <h1>同抵集结计时器</h1>
           </div>
         </div>
-        <div className="live-clock" aria-label={`当前时间 ${formatClock(now)}`}>
+        <div
+          className="live-clock"
+          aria-label={
+            liveClockTime === null
+              ? "当前时间加载中"
+              : `当前时间 ${formatClock(liveClockTime)}`
+          }
+        >
           <span className="live-dot" />
           <span>当前时间</span>
-          <strong>{formatClock(now)}</strong>
+          <strong>
+            {liveClockTime === null ? "--:--:--" : formatClock(liveClockTime)}
+          </strong>
         </div>
       </header>
 
@@ -537,14 +569,14 @@ export default function Home() {
           />
 
           <div className="quick-times" aria-label="快捷设置到达时间">
-            {[1, 2, 3, 5].map((minutes) => (
+            {QUICK_ARRIVAL_PRESETS.map((preset) => (
               <button
-                key={minutes}
+                key={preset.seconds}
                 type="button"
                 disabled={running}
-                onClick={() => setQuickArrival(minutes)}
+                onClick={() => setQuickArrival(preset.seconds)}
               >
-                +{minutes} 分钟
+                {preset.label}
               </button>
             ))}
           </div>

@@ -35,6 +35,7 @@ test("renders the WJDR rally timer shell", async () => {
   assert.match(normalizedHtml, /统一到达时间/);
   assert.match(normalizedHtml, /开始同步计时/);
   assert.match(normalizedHtml, /\+1 分钟/);
+  assert.match(normalizedHtml, /\+90 秒/);
   assert.match(normalizedHtml, /\+2 分钟/);
   assert.match(normalizedHtml, /\+3 分钟/);
   assert.match(normalizedHtml, /\+5 分钟/);
@@ -56,6 +57,20 @@ test("keeps voice alerts concise and completes launched rallies", async () => {
   assert.match(source, /nextGroup\.map\(\(plan\) => plan\.name\)\.join\("、"\)/);
   assert.match(source, /spokenRef\.current\.add\(`\$\{plan\.id\}:prepare`\)/);
   assert.match(source, /speak\("发出"\)/);
+  assert.match(source, /const VOICE_LEAD_MS = 300/);
+  assert.match(source, /delta <= VOICE_LEAD_MS/);
+  assert.match(
+    source,
+    /announceSeconds \* 1000 \+ VOICE_LEAD_MS/,
+  );
+  assert.match(
+    source,
+    /useState<number \| null>\(null\)/,
+  );
+  assert.match(
+    source,
+    /liveClockTime === null \? "--:--:--" : formatClock\(liveClockTime\)/,
+  );
   assert.match(source, /setFinishedRallyIds\(nextFinishedIds\)/);
   assert.match(source, /const MERGE_WINDOW_MS = 5000/);
   assert.match(
