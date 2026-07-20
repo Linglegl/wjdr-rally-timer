@@ -302,6 +302,7 @@ input:disabled {
 
 .merged-countdown-item {
   display: flex;
+  position: relative;
   min-height: 112px;
   flex-direction: column;
   align-items: center;
@@ -309,10 +310,32 @@ input:disabled {
   gap: 8px;
   padding: 14px;
   border: 1px solid rgba(107, 214, 162, 0.25);
+  border-left: 3px solid var(--success);
   background: rgba(107, 214, 162, 0.045);
 }
 
-.merged-countdown-item > span {
+.merged-countdown-meta {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.merged-countdown-index {
+  display: grid;
+  width: 22px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(107, 214, 162, 0.3);
+  color: var(--success);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.merged-countdown-name {
   max-width: 100%;
   overflow: hidden;
   color: var(--muted);
@@ -332,6 +355,7 @@ input:disabled {
 
 .merged-countdown-item.tone-launch {
   border-color: rgba(255, 93, 42, 0.5);
+  border-left-color: var(--signal);
 }
 
 .merged-countdown-item.tone-launch > strong {
@@ -996,6 +1020,12 @@ footer p {
     min-height: 76px;
     flex-direction: row;
     justify-content: space-between;
+  }
+
+  .merged-countdown-meta {
+    width: auto;
+    min-width: 0;
+    justify-content: flex-start;
   }
 
   .merged-countdown-item > strong {

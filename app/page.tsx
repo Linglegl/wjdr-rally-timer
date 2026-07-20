@@ -235,18 +235,31 @@ export default function Home() {
       return;
     }
 
-    const nextPlan = pendingPlans.find((plan) => plan.launchAt > now);
+    const nextGroup = activeGroup.filter((plan) => plan.launchAt > now);
+    const nextPlan = nextGroup[0];
     if (nextPlan) {
       const delta = nextPlan.launchAt - now;
       if (delta <= announceSeconds * 1000) {
-        const key = `${nextPlan.id}:prepare`;
-        if (!spokenRef.current.has(key)) {
-          spokenRef.current.add(key);
-          speak(`${nextPlan.name}，准备`);
+        const unannouncedPlans = nextGroup.filter(
+          (plan) => !spokenRef.current.has(`${plan.id}:prepare`),
+        );
+        if (unannouncedPlans.length) {
+          nextGroup.forEach((plan) =>
+            spokenRef.current.add(`${plan.id}:prepare`),
+          );
+          speak(`${nextGroup.map((plan) => plan.name).join("、")}，准备`);
         }
       }
     }
-  }, [announceSeconds, finishedRallyIds, now, pendingPlans, plans.length, running]);
+  }, [
+    activeGroup,
+    announceSeconds,
+    finishedRallyIds,
+    now,
+    pendingPlans,
+    plans.length,
+    running,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -405,14 +418,21 @@ export default function Home() {
               </p>
               {activeGroup.length > 1 ? (
                 <div className="merged-countdowns">
-                  {activeGroup.map((plan) => {
+                  {activeGroup.map((plan, index) => {
                     const status = getStatus(plan, now, announceSeconds);
                     return (
                       <div
                         className={`merged-countdown-item tone-${status.tone}`}
                         key={plan.id}
                       >
-                        <span>{plan.name}</span>
+                        <span className="merged-countdown-meta">
+                          <span className="merged-countdown-index">
+                            {pad(index + 1)}
+                          </span>
+                          <span className="merged-countdown-name">
+                            {plan.name}
+                          </span>
+                        </span>
                         <strong>
                           {status.tone === "launch"
                             ? "发出"

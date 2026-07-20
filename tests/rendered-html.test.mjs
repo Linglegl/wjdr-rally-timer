@@ -53,7 +53,8 @@ test("keeps voice alerts concise and completes launched rallies", async () => {
     "utf8",
   );
 
-  assert.match(source, /`\$\{nextPlan\.name\}，准备`/);
+  assert.match(source, /nextGroup\.map\(\(plan\) => plan\.name\)\.join\("、"\)/);
+  assert.match(source, /spokenRef\.current\.add\(`\$\{plan\.id\}:prepare`\)/);
   assert.match(source, /speak\("发出"\)/);
   assert.match(source, /setFinishedRallyIds\(nextFinishedIds\)/);
   assert.match(source, /const MERGE_WINDOW_MS = 5000/);
