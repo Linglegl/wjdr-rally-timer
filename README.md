@@ -15,8 +15,8 @@
 
 ```powershell
 cd D:\CodeX\wjdr\wjdr-rally-timer
-npm install
-npm run dev
+npm.cmd ci
+npm.cmd run dev
 ```
 
 终端显示本地地址后，用浏览器打开：
@@ -31,17 +31,19 @@ http://localhost:3000
 
 ```powershell
 cd D:\CodeX\wjdr\wjdr-rally-timer
-npm run dev
+npm.cmd run dev
 ```
 
 ### 生产构建
 
 ```powershell
 cd D:\CodeX\wjdr\wjdr-rally-timer
-npm run build
+npm.cmd run build
 ```
 
 构建完成后，部署产物位于 `dist` 目录。
+
+这里使用 `npm.cmd` 是为了避开部分 Windows PowerShell 的脚本执行策略限制；在 CMD 或其他终端中也可以直接使用 `npm`。
 
 ## 使用流程
 
