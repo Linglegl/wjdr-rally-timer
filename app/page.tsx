@@ -1,0 +1,680 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+type Rally = {
+  id: string;
+  name: string;
+  minutes: number;
+  seconds: number;
+};
+
+type RallyPlan = Rally & {
+  durationSeconds: number;
+  launchAt: number;
+  remainingMs: number;
+};
+
+const STORAGE_KEY = "wjdr-rally-timer-v1";
+const DEFAULT_RALLIES: Rally[] = [
+  { id: "rally-1", name: "一队 · 主力集结", minutes: 2, seconds: 36 },
+  { id: "rally-2", name: "二队 · 侧翼集结", minutes: 1, seconds: 48 },
+  { id: "rally-3", name: "三队 · 支援集结", minutes: 0, seconds: 58 },
+];
+
+function pad(value: number) {
+  return String(Math.max(0, Math.floor(value))).padStart(2, "0");
+}
+
+function toLocalDateTimeValue(date: Date) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate(),
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
+    date.getSeconds(),
+  )}`;
+}
+
+function getDefaultArrival(now = Date.now()) {
+  const date = new Date(now + 10 * 60 * 1000);
+  date.setSeconds(0, 0);
+  return toLocalDateTimeValue(date);
+}
+
+function formatClock(timestamp: number, withDate = false) {
+  if (!Number.isFinite(timestamp)) return "--:--:--";
+  return new Intl.DateTimeFormat("zh-CN", {
+    ...(withDate
+      ? { month: "2-digit", day: "2-digit" }
+      : {}),
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(timestamp));
+}
+
+function formatDuration(totalSeconds: number) {
+  const safeSeconds = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+  return hours > 0
+    ? `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
+    : `${pad(minutes)}:${pad(seconds)}`;
+}
+
+function formatRemaining(milliseconds: number) {
+  if (!Number.isFinite(milliseconds)) return "--:--";
+  const sign = milliseconds < 0 ? "-" : "";
+  return `${sign}${formatDuration(Math.abs(milliseconds) / 1000)}`;
+}
+
+function getStatus(plan: RallyPlan, now: number, announceSeconds: number) {
+  const delta = plan.launchAt - now;
+  if (delta > announceSeconds * 1000) {
+    return { label: "等待", tone: "waiting", detail: `还有 ${formatRemaining(delta)}` };
+  }
+  if (delta > 0) {
+    return {
+      label: `${Math.max(1, Math.ceil(delta / 1000))}`,
+      tone: "counting",
+      detail: "准备发出",
+    };
+  }
+  if (delta > -2500) {
+    return { label: "发出", tone: "launch", detail: "现在发出集结" };
+  }
+  return { label: "已发出", tone: "done", detail: formatClock(plan.launchAt) };
+}
+
+export default function Home() {
+  const [arrivalValue, setArrivalValue] = useState("");
+  const [announceSeconds, setAnnounceSeconds] = useState(5);
+  const [rallies, setRallies] = useState<Rally[]>(DEFAULT_RALLIES);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [now, setNow] = useState(0);
+  const [error, setError] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+  const spokenRef = useRef(new Set<string>());
+  const audioRef = useRef<AudioContext | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+
+  const arrivalAt = new Date(arrivalValue).getTime();
+  const plans = useMemo<RallyPlan[]>(
+    () =>
+      rallies
+        .map((rally) => {
+          const durationSeconds =
+            Math.max(0, rally.minutes) * 60 + Math.max(0, rally.seconds);
+          const launchAt = arrivalAt - durationSeconds * 1000;
+          return {
+            ...rally,
+            durationSeconds,
+            launchAt,
+            remainingMs: launchAt - now,
+          };
+        })
+        .sort((a, b) => a.launchAt - b.launchAt),
+    [arrivalAt, now, rallies],
+  );
+
+  const activePlan = useMemo(() => {
+    const justLaunched = plans.find((plan) => {
+      const delta = plan.launchAt - now;
+      return delta <= 0 && delta > -900;
+    });
+    return (
+      justLaunched ??
+      plans.find((plan) => plan.launchAt > now) ??
+      plans[plans.length - 1]
+    );
+  }, [now, plans]);
+  const activeStatus = activePlan
+    ? getStatus(activePlan, now, announceSeconds)
+    : null;
+  const completedCount = plans.filter((plan) => plan.launchAt <= now).length;
+  const allDone =
+    running &&
+    plans.length > 0 &&
+    plans.every((plan) => now - plan.launchAt > 2500);
+
+  const speak = useCallback(
+    (text: string, urgent = false) => {
+      if (!voiceEnabled || typeof window === "undefined") return;
+
+      if ("speechSynthesis" in window) {
+        if (urgent) window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "zh-CN";
+        utterance.rate = urgent ? 1.12 : 1;
+        utterance.pitch = 1;
+        utterance.volume = 1;
+        window.speechSynthesis.speak(utterance);
+      }
+
+      try {
+        const AudioContextClass =
+          window.AudioContext ||
+          (
+            window as typeof window & {
+              webkitAudioContext?: typeof AudioContext;
+            }
+          ).webkitAudioContext;
+        if (!AudioContextClass) return;
+        const context = audioRef.current ?? new AudioContextClass();
+        audioRef.current = context;
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.frequency.value = urgent ? 880 : 610;
+        gain.gain.setValueAtTime(0.0001, context.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.12);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start();
+        oscillator.stop(context.currentTime + 0.13);
+      } catch {
+        // Speech remains available even if Web Audio is restricted.
+      }
+    },
+    [voiceEnabled],
+  );
+
+  useEffect(() => {
+    const mountedAt = Date.now();
+    setNow(mountedAt);
+    try {
+      const saved = window.localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const data = JSON.parse(saved) as {
+          arrivalValue?: string;
+          announceSeconds?: number;
+          voiceEnabled?: boolean;
+          rallies?: Rally[];
+        };
+        setArrivalValue(
+          data.arrivalValue || getDefaultArrival(mountedAt),
+        );
+        if (typeof data.announceSeconds === "number") {
+          setAnnounceSeconds(data.announceSeconds);
+        }
+        if (typeof data.voiceEnabled === "boolean") {
+          setVoiceEnabled(data.voiceEnabled);
+        }
+        if (Array.isArray(data.rallies) && data.rallies.length) {
+          setRallies(data.rallies);
+        }
+      } else {
+        setArrivalValue(getDefaultArrival(mountedAt));
+      }
+    } catch {
+      window.localStorage.removeItem(STORAGE_KEY);
+      setArrivalValue(getDefaultArrival(mountedAt));
+    } finally {
+      setHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ arrivalValue, announceSeconds, voiceEnabled, rallies }),
+    );
+  }, [announceSeconds, arrivalValue, hydrated, rallies, voiceEnabled]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), running ? 80 : 500);
+    return () => window.clearInterval(timer);
+  }, [running]);
+
+  useEffect(() => {
+    if (!running) return;
+
+    const newLaunches = plans.filter((plan) => {
+      const delta = plan.launchAt - now;
+      if (delta <= 0 && delta > -900) {
+        const key = `${plan.id}:launch`;
+        if (!spokenRef.current.has(key)) {
+          spokenRef.current.add(key);
+          return true;
+        }
+      }
+      return false;
+    });
+
+    if (newLaunches.length) {
+      speak(
+        `${newLaunches.map((plan) => plan.name).join("、")}，发出集结`,
+        true,
+      );
+      return;
+    }
+
+    const nextPlan = plans.find((plan) => plan.launchAt > now);
+    if (nextPlan) {
+      const delta = nextPlan.launchAt - now;
+      const countdown = Math.ceil(delta / 1000);
+      if (delta <= announceSeconds * 1000) {
+        const key = `${nextPlan.id}:count:${countdown}`;
+        if (!spokenRef.current.has(key)) {
+          spokenRef.current.add(key);
+          speak(
+            countdown === announceSeconds
+              ? `${nextPlan.name}，准备，${countdown}`
+              : String(countdown),
+          );
+        }
+      }
+    }
+  }, [announceSeconds, now, plans, running, speak]);
+
+  useEffect(() => {
+    return () => {
+      wakeLockRef.current?.release().catch(() => undefined);
+      audioRef.current?.close().catch(() => undefined);
+      window.speechSynthesis?.cancel();
+    };
+  }, []);
+
+  function updateRally(id: string, changes: Partial<Rally>) {
+    setRallies((current) =>
+      current.map((rally) =>
+        rally.id === id ? { ...rally, ...changes } : rally,
+      ),
+    );
+    if (running) stopTimer();
+  }
+
+  function addRally() {
+    const nextNumber = rallies.length + 1;
+    setRallies((current) => [
+      ...current,
+      {
+        id: `rally-${Date.now()}`,
+        name: `${nextNumber}队 · 新集结`,
+        minutes: 1,
+        seconds: 30,
+      },
+    ]);
+  }
+
+  function removeRally(id: string) {
+    if (rallies.length <= 1) return;
+    setRallies((current) => current.filter((rally) => rally.id !== id));
+    if (running) stopTimer();
+  }
+
+  async function startTimer() {
+    const timestamp = Date.now();
+    setNow(timestamp);
+    if (!Number.isFinite(arrivalAt)) {
+      setError("请先设置有效的统一到达时间");
+      return;
+    }
+    if (!rallies.length) {
+      setError("请至少添加一条集结");
+      return;
+    }
+    if (plans.some((plan) => plan.durationSeconds <= 0)) {
+      setError("每条集结的行军时长必须大于 0 秒");
+      return;
+    }
+    if (plans.some((plan) => plan.launchAt <= timestamp)) {
+      setError("有集结的发车时间已经过去，请延后统一到达时间");
+      return;
+    }
+
+    setError("");
+    spokenRef.current.clear();
+    setRunning(true);
+
+    try {
+      if ("wakeLock" in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      }
+    } catch {
+      // The timer still works if the device does not support wake lock.
+    }
+
+    if (voiceEnabled) {
+      speak("同步计时已开始");
+    }
+  }
+
+  function stopTimer() {
+    setRunning(false);
+    spokenRef.current.clear();
+    wakeLockRef.current?.release().catch(() => undefined);
+    wakeLockRef.current = null;
+    window.speechSynthesis?.cancel();
+  }
+
+  function setQuickArrival(minutesFromNow: number) {
+    const target = new Date(Date.now() + minutesFromNow * 60 * 1000);
+    target.setMilliseconds(0);
+    setArrivalValue(toLocalDateTimeValue(target));
+    if (running) stopTimer();
+  }
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            W
+          </span>
+          <div>
+            <p>WJDR · 联盟作战工具</p>
+            <h1>同抵集结计时器</h1>
+          </div>
+        </div>
+        <div className="live-clock" aria-label={`当前时间 ${formatClock(now)}`}>
+          <span className="live-dot" />
+          <span>当前时间</span>
+          <strong>{formatClock(now)}</strong>
+        </div>
+      </header>
+
+      <section className="hero-grid" aria-label="计时总览">
+        <article
+          className={`command-panel ${
+            running && activeStatus ? `is-${activeStatus.tone}` : ""
+          }`}
+        >
+          <div className="panel-kicker">
+            <span>{running ? "计时进行中" : "作战准备"}</span>
+            {running && (
+              <span className="progress-label">
+                {completedCount}/{plans.length} 已发出
+              </span>
+            )}
+          </div>
+
+          {!running ? (
+            <div className="idle-state">
+              <p>下一步</p>
+              <h2>设定同一到达时间</h2>
+              <span>
+                系统会根据每队行军时长，自动反推出准确的发车时刻。
+              </span>
+            </div>
+          ) : allDone ? (
+            <div className="idle-state complete-state" aria-live="assertive">
+              <p>本轮完成</p>
+              <h2>全部集结已发出</h2>
+              <span>各队将于 {formatClock(arrivalAt)} 同时到达目标。</span>
+            </div>
+          ) : (
+            <div className="countdown-state" aria-live="polite">
+              <p className="active-name">{activePlan?.name}</p>
+              <div className="hero-countdown">
+                {activeStatus?.tone === "launch"
+                  ? "发出"
+                  : activeStatus?.tone === "counting"
+                    ? activeStatus.label
+                    : formatRemaining(activePlan?.remainingMs ?? 0)}
+              </div>
+              <p className="active-hint">
+                {activeStatus?.tone === "counting"
+                  ? "准备点击游戏内集结按钮"
+                  : activeStatus?.detail}
+              </p>
+            </div>
+          )}
+
+          <div className="arrival-strip">
+            <div>
+              <span>统一到达</span>
+              <strong>{formatClock(arrivalAt, true)}</strong>
+            </div>
+            <div className="arrival-line" aria-hidden="true">
+              <span />
+            </div>
+            <div>
+              <span>倒数报数</span>
+              <strong>{announceSeconds} 秒</strong>
+            </div>
+          </div>
+        </article>
+
+        <aside className="setup-panel">
+          <div className="section-title">
+            <div>
+              <span>01</span>
+              <h2>作战参数</h2>
+            </div>
+            <span className={`mode-badge ${running ? "active" : ""}`}>
+              {running ? "已锁定" : "可编辑"}
+            </span>
+          </div>
+
+          <label className="field-label" htmlFor="arrival-time">
+            统一到达时间
+          </label>
+          <input
+            id="arrival-time"
+            className="datetime-input"
+            type="datetime-local"
+            step="1"
+            value={arrivalValue}
+            disabled={running}
+            onChange={(event) => {
+              setArrivalValue(event.target.value);
+              setError("");
+            }}
+          />
+
+          <div className="quick-times" aria-label="快捷设置到达时间">
+            {[5, 10, 15, 20].map((minutes) => (
+              <button
+                key={minutes}
+                type="button"
+                disabled={running}
+                onClick={() => setQuickArrival(minutes)}
+              >
+                +{minutes} 分钟
+              </button>
+            ))}
+          </div>
+
+          <div className="compact-settings">
+            <label>
+              <span>提前报数</span>
+              <span className="number-control">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min="3"
+                  max="30"
+                  value={announceSeconds}
+                  disabled={running}
+                  aria-label="提前报数秒数"
+                  onChange={(event) =>
+                    setAnnounceSeconds(
+                      Math.min(30, Math.max(3, Number(event.target.value) || 3)),
+                    )
+                  }
+                />
+                <em>秒</em>
+              </span>
+            </label>
+            <label className="switch-row">
+              <span>
+                <strong>语音提醒</strong>
+                <small>逐秒中文报数</small>
+              </span>
+              <input
+                type="checkbox"
+                checked={voiceEnabled}
+                onChange={(event) => setVoiceEnabled(event.target.checked)}
+                aria-label="开启语音提醒"
+              />
+              <span className="switch" aria-hidden="true" />
+            </label>
+          </div>
+
+          {error && (
+            <p className="error-message" role="alert">
+              {error}
+            </p>
+          )}
+
+          <button
+            className={`primary-action ${running ? "stop" : ""}`}
+            type="button"
+            onClick={running ? stopTimer : startTimer}
+          >
+            <span aria-hidden="true">{running ? "■" : "▶"}</span>
+            {running ? "停止并重新校准" : "开始同步计时"}
+          </button>
+          <p className="action-note">
+            点击开始即启用屏幕常亮；建议保持本页面在前台。
+          </p>
+        </aside>
+      </section>
+
+      <section className="rallies-section">
+        <div className="rallies-heading">
+          <div className="section-title">
+            <div>
+              <span>02</span>
+              <h2>集结队列</h2>
+            </div>
+          </div>
+          <button
+            className="add-button"
+            type="button"
+            disabled={running}
+            onClick={addRally}
+          >
+            <span aria-hidden="true">＋</span>
+            添加集结
+          </button>
+        </div>
+
+        <div className="table-header" aria-hidden="true">
+          <span>集结名称</span>
+          <span>行军时长</span>
+          <span>发车时刻</span>
+          <span>状态</span>
+          <span />
+        </div>
+
+        <div className="rally-list">
+          {plans.map((plan, index) => {
+            const status = getStatus(plan, now, announceSeconds);
+            return (
+              <article
+                className={`rally-row ${
+                  running ? `status-${status.tone}` : ""
+                }`}
+                key={plan.id}
+              >
+                <div className="rally-name-cell">
+                  <span className="queue-number">{pad(index + 1)}</span>
+                  <input
+                    type="text"
+                    value={plan.name}
+                    disabled={running}
+                    aria-label={`第 ${index + 1} 条集结名称`}
+                    onChange={(event) =>
+                      updateRally(plan.id, { name: event.target.value })
+                    }
+                  />
+                </div>
+
+                <div className="duration-cell">
+                  <label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      inputMode="numeric"
+                      value={plan.minutes}
+                      disabled={running}
+                      aria-label={`${plan.name}行军分钟`}
+                      onChange={(event) =>
+                        updateRally(plan.id, {
+                          minutes: Math.min(
+                            59,
+                            Math.max(0, Number(event.target.value) || 0),
+                          ),
+                        })
+                      }
+                    />
+                    <span>分</span>
+                  </label>
+                  <b>:</b>
+                  <label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      inputMode="numeric"
+                      value={plan.seconds}
+                      disabled={running}
+                      aria-label={`${plan.name}行军秒数`}
+                      onChange={(event) =>
+                        updateRally(plan.id, {
+                          seconds: Math.min(
+                            59,
+                            Math.max(0, Number(event.target.value) || 0),
+                          ),
+                        })
+                      }
+                    />
+                    <span>秒</span>
+                  </label>
+                </div>
+
+                <div className="launch-time-cell">
+                  <strong>{formatClock(plan.launchAt)}</strong>
+                  <span>反推发车</span>
+                </div>
+
+                <div className={`status-cell tone-${status.tone}`}>
+                  <strong>{running ? status.label : "就绪"}</strong>
+                  <span>
+                    {running
+                      ? status.detail
+                      : `行军 ${formatDuration(plan.durationSeconds)}`}
+                  </span>
+                </div>
+
+                <button
+                  className="remove-button"
+                  type="button"
+                  disabled={running || rallies.length <= 1}
+                  onClick={() => removeRally(plan.id)}
+                  aria-label={`删除${plan.name}`}
+                >
+                  ×
+                </button>
+              </article>
+            );
+          })}
+        </div>
+
+        <div className="sync-note">
+          <span className="sync-icon" aria-hidden="true">
+            ◎
+          </span>
+          <p>
+            <strong>同抵校验通过</strong>
+            <span>
+              所有集结均按各自行军时长反推，预计于{" "}
+              {formatClock(arrivalAt)} 同时抵达。
+            </span>
+          </p>
+        </div>
+      </section>
+
+      <footer>
+        <span>WJDR BRANCH PROJECT</span>
+        <p>本地保存 · 无需登录 · 精确到秒</p>
+      </footer>
+    </main>
+  );
+}
