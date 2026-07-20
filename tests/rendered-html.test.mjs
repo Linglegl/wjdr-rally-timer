@@ -42,6 +42,7 @@ test("renders the WJDR rally timer shell", async () => {
   assert.match(normalizedHtml, /Powered by Linglegl/);
   assert.match(html, /href="\/logo\.jpg"/);
   assert.doesNotMatch(html, /逐秒中文报数|开启语音提醒/);
+  assert.doesNotMatch(html, /WJDR BRANCH PROJECT/);
   assert.doesNotMatch(html, /codex-preview/);
   assert.doesNotMatch(html, /react-loading-skeleton/);
 });
@@ -53,8 +54,11 @@ test("keeps voice alerts concise and completes launched rallies", async () => {
   );
 
   assert.match(source, /`\$\{nextPlan\.name\}，准备`/);
-  assert.match(source, /join\("、"\)\}，发出/);
+  assert.match(source, /speak\("发出"\)/);
   assert.match(source, /setFinishedRallyIds\(nextFinishedIds\)/);
+  assert.match(source, /const MERGE_WINDOW_MS = 5000/);
+  assert.match(source, /plan\.launchAt - previousPlan\.launchAt >= MERGE_WINDOW_MS/);
+  assert.match(source, /相隔不足 5 秒，按各自倒计时依次发出/);
   assert.match(source, /该时间已无法到达，请检查时间是否设置正确/);
   assert.doesNotMatch(source, /voiceEnabled|AudioContext|count:\$\{countdown\}/);
 });

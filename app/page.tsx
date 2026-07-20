@@ -16,6 +16,7 @@ type RallyPlan = Rally & {
 };
 
 const STORAGE_KEY = "wjdr-rally-timer-v1";
+const MERGE_WINDOW_MS = 5000;
 const DEFAULT_RALLIES: Rally[] = [
   { id: "rally-1", name: "一队 · 主力集结", minutes: 2, seconds: 36 },
   { id: "rally-2", name: "二队 · 侧翼集结", minutes: 1, seconds: 48 },
@@ -72,11 +73,15 @@ function formatRemaining(milliseconds: number) {
 function getStatus(plan: RallyPlan, now: number, announceSeconds: number) {
   const delta = plan.launchAt - now;
   if (delta > announceSeconds * 1000) {
-    return { label: "等待", tone: "waiting", detail: `还有 ${formatRemaining(delta)}` };
+    return {
+      label: formatRemaining(delta),
+      tone: "waiting",
+      detail: "等待发出",
+    };
   }
   if (delta > 0) {
     return {
-      label: `${Math.max(1, Math.ceil(delta / 1000))}`,
+      label: `${Math.max(1, Math.ceil(delta / 1000))} 秒`,
       tone: "counting",
       detail: "准备发出",
     };
@@ -120,8 +125,24 @@ export default function Home() {
     () => plans.filter((plan) => !finishedRallyIds.includes(plan.id)),
     [finishedRallyIds, plans],
   );
-  const activePlan =
-    pendingPlans.find((plan) => plan.launchAt > now) ?? pendingPlans[0];
+  const activeGroup = useMemo(() => {
+    const firstPlan =
+      pendingPlans.find((plan) => plan.launchAt > now) ?? pendingPlans[0];
+    if (!firstPlan) return [];
+
+    const firstIndex = pendingPlans.findIndex((plan) => plan.id === firstPlan.id);
+    const group = [firstPlan];
+    let previousPlan = firstPlan;
+
+    for (const plan of pendingPlans.slice(firstIndex + 1)) {
+      if (plan.launchAt - previousPlan.launchAt >= MERGE_WINDOW_MS) break;
+      group.push(plan);
+      previousPlan = plan;
+    }
+
+    return group;
+  }, [now, pendingPlans]);
+  const activePlan = activeGroup[0];
   const activeStatus = activePlan
     ? getStatus(activePlan, now, announceSeconds)
     : null;
@@ -198,7 +219,7 @@ export default function Home() {
     });
 
     if (newLaunches.length) {
-      speak(`${newLaunches.map((plan) => plan.name).join("、")}，发出`);
+      speak("发出");
       const completedIds = newLaunches.map((plan) => plan.id);
       const nextFinishedIds = Array.from(
         new Set([...finishedRallyIds, ...completedIds]),
@@ -377,16 +398,45 @@ export default function Home() {
             </div>
           ) : (
             <div className="countdown-state" aria-live="polite">
-              <p className="active-name">{activePlan?.name}</p>
-              <div className="hero-countdown">
-                {activeStatus?.tone === "launch"
-                  ? "发出"
-                  : activeStatus?.tone === "counting"
-                    ? activeStatus.label
-                    : formatRemaining(activePlan?.remainingMs ?? 0)}
-              </div>
+              <p className="active-name">
+                {activeGroup.length > 1
+                  ? `${activeGroup.length} 队近距集结 · 合并显示`
+                  : activePlan?.name}
+              </p>
+              {activeGroup.length > 1 ? (
+                <div className="merged-countdowns">
+                  {activeGroup.map((plan) => {
+                    const status = getStatus(plan, now, announceSeconds);
+                    return (
+                      <div
+                        className={`merged-countdown-item tone-${status.tone}`}
+                        key={plan.id}
+                      >
+                        <span>{plan.name}</span>
+                        <strong>
+                          {status.tone === "launch"
+                            ? "发出"
+                            : status.tone === "counting"
+                              ? status.label
+                              : formatRemaining(plan.remainingMs)}
+                        </strong>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="hero-countdown">
+                  {activeStatus?.tone === "launch"
+                    ? "发出"
+                    : activeStatus?.tone === "counting"
+                      ? activeStatus.label
+                      : formatRemaining(activePlan?.remainingMs ?? 0)}
+                </div>
+              )}
               <p className="active-hint">
-                {activeStatus?.tone === "counting"
+                {activeGroup.length > 1
+                  ? "相隔不足 5 秒，按各自倒计时依次发出"
+                  : activeStatus?.tone === "counting"
                   ? "准备点击游戏内集结按钮"
                   : activeStatus?.detail}
               </p>
@@ -648,7 +698,6 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>WJDR BRANCH PROJECT</span>
         <p>Powered by Linglegl</p>
       </footer>
     </main>
